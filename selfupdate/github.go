@@ -10,12 +10,43 @@ import (
 	"time"
 )
 
-// Repo 是发布源。写死而不是做成配置项：更新源可配等于给任何能改配置的人一条
-// 远程代码执行通道，对一个渗透测试平台来说这个口子开不得。
-const Repo = "Autumn-27/artex"
+// Repo 是发布源，形如 owner/name。
+//
+// 原设计写死为常量，理由是"更新源可配 = 给任何能改配置的人一条远程代码执行通道"。
+// 这个安全考量在本 fork 里**原样保留**：Repo 仍然不是运行时配置项，改它只能靠
+// 重新编译（ldflags -X），运行时（页面 / .env / 数据库）改不了。
+//
+// 之所以从 const 改成 var：原值 Autumn-27/artex 的仓库与 Release 已全部 404，
+// 写死会让「一键更新」永久失败。改为 var 后由 build.sh 注入各 fork 自己的发布源：
+//
+//	-ldflags "-X github.com/Autumn-27/artex/selfupdate.Repo=<owner>/<name>"
+//
+// **零值刻意是空字符串**，表示"没有可用发布源"—— 一键更新被结构性禁用，
+// 前端显示「未配置发布源」，而不是拿一个必然 404 的上游仓库当故障报给用户。
+// 想恢复原上游行为就显式注入 Autumn-27/artex。
+var Repo string
+
+// RepoConfigured 报告当前构建是否带了一个可用的发布源。
+// 空串（未注入 / 显式置空）意味着禁用一键更新。
+func RepoConfigured() bool {
+	return strings.TrimSpace(Repo) != ""
+}
+
+// RepoOrDefault 返回用于展示的仓库名，空串时给出一个占位说明。
+func RepoOrDefault() string {
+	if r := strings.TrimSpace(Repo); r != "" {
+		return r
+	}
+	return "（未配置发布源）"
+}
 
 // latestURL 是 GitHub 的"最新正式版"接口。它会自动跳过 prerelease 和 draft。
-const latestURL = "https://api.github.com/repos/" + Repo + "/releases/latest"
+//
+// 刻意在每次调用时拼接而不是做成包级 var：Repo 是可被 ldflags 注入的 var，
+// 包级初始化顺序不保证它已被替换，固化的 URL 会指向旧仓库。
+func latestURL() string {
+	return "https://api.github.com/repos/" + strings.TrimSpace(Repo) + "/releases/latest"
+}
 
 // allowedHosts 限定升级链路能访问的域名。配合下面的 checkRedirect，
 // 任何一跳被重定向到名单外的主机都会直接失败——这是防止 DNS 污染 / 中间人
@@ -86,7 +117,11 @@ func checkURL(u *url.URL) error {
 
 // FetchLatest 查询最新正式版。
 func FetchLatest(ctx context.Context, c *http.Client) (*Release, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, latestURL, nil)
+	if !RepoConfigured() {
+		return nil, fmt.Errorf("本构建未配置发布源（编译时未注入 Repo），一键更新不可用；" +
+			"请用 build.sh 重新编译并传入 -ldflags \"-X github.com/Autumn-27/artex/selfupdate.Repo=<owner>/<name>\"")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, latestURL(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +142,7 @@ func FetchLatest(ctx context.Context, c *http.Client) (*Release, error) {
 		// 未认证的 GitHub API 是每 IP 每小时 60 次，共用出口 IP 时很容易撞上。
 		return nil, fmt.Errorf("GitHub 接口限流（每小时 60 次），请稍后再试")
 	case resp.StatusCode == http.StatusNotFound:
-		return nil, fmt.Errorf("仓库 %s 尚未发布任何正式版本", Repo)
+		return nil, fmt.Errorf("仓库 %s 尚未发布任何正式版本（该仓库不存在，或已删除 / 未建Release）", RepoOrDefault())
 	case resp.StatusCode != http.StatusOK:
 		return nil, fmt.Errorf("GitHub 返回 %d", resp.StatusCode)
 	}

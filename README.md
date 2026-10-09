@@ -7,7 +7,8 @@ AI 自主渗透测试系统（Go 后端 + Next.js 前端）
 
 🌐 **在线 Demo**： [https://artex-demo.vercel.app/](https://artex-demo.vercel.app/)
 
-📦 **该仓库为ARTEX最后一个版本纯源码备份，docker部署源失效自行让AI本地构建即可**
+📦 **上游原作者仓库（`Autumn-27/ARTEX`）与其 Docker Hub 镜像均已删除**，本 fork 已修复两条随之失效的链路：
+Docker 改为本地构建（`./docker-build.sh`），一键更新的发布源改为编译期注入（`ARTEX_UPDATE_REPO`）。详见下方[「关于本 fork 的两条失效链路」](#关于本fork-的两条失效链路)。
 
 </div>
 
@@ -68,10 +69,23 @@ AI 自主渗透测试系统（Go 后端 + Next.js 前端）
 
 > 依赖数据库 **PostgreSQL**；探索需配置 **LLM**（`ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY`，也可在 UI 里配）。
 
+### ⚠️ 关于本fork 的两条失效链路
+
+上游原作者仓库 `Autumn-27/ARTEX` 与 Docker Hub 镜像 `autumn27/artex` 均已删除：
+
+| 链路 | 状态 | 本 fork 的替代方案 |
+| --- | --- | --- |
+| Docker 一键部署 | ❌ 镜像 404 | 改为**本地构建**：`./docker-build.sh`（见方式二） |
+| 页面「一键更新」 | ❌ 上游 0 release | 编译期注入自己的发布源：`ARTEX_UPDATE_REPO=<owner>/<name> ./build.sh` |
+| 从Releases 下载二进制 | ❌ 上游 0 release | 用方式四从源码编译 |
+| `git clone` 地址 | ❌ 上游 404 | `git clone https://github.com/xinster/ARTEX.git` |
+
+后端与前端源码本身**完整可用**，本地编译已验证通过（Go 1.26.3 + Node 22+ PostgreSQL 16）。
+
 ### 方式一：一键安装脚本（推荐）
 
 ```bash
-git clone https://github.com/Autumn-27/ARTEX.git
+git clone https://github.com/xinster/ARTEX.git
 cd ARTEX
 ./install.sh
 ```
@@ -81,17 +95,25 @@ cd ARTEX
 - **① 全部 Docker**：填一个 Postgres 密码（可回车随机）→ 自动写 `.env` → `docker compose up -d`。
 - **② 本地运行**：选数据库（连已有 / 用 Docker 起一个）→ 生成 `config.json` → `go` 编译内嵌单二进制 → 启动。
 
-装好后打开 **http://localhost:8787**（首次进入 `/setup` 设置管理员密码）。
+装好后打开 **http://localhost:8787**（首次进入 `/setup` 设置管理员密码，登录用户名固定为 `ARTEX`）。
 
-### 方式二：Docker Compose（手动）
+### 方式二：Docker Compose（本地构建）
+
+上游 Docker Hub 镜像已删除，`docker-compose.yml` 默认改为**从当前源码本地构建**，不再拉外部镜像：
 
 ```bash
-git clone https://github.com/Autumn-27/ARTEX.git
+git clone https://github.com/xinster/ARTEX.git
 cd ARTEX
-cp .env.example .env          # 填 POSTGRES_PASSWORD、可选 ANTHROPIC_API_KEY
-docker compose up -d          # 拉取 autumn27/artex 镜像 + postgres
+cp .env.example .env      # 填 POSTGRES_PASSWORD、可选 ANTHROPIC_API_KEY
+./docker-build.sh         # ① 前端导出 → ② 编译 linux 二进制 → ③ build 镜像 → ④ up
 # → http://localhost:8787
 ```
+
+> Docker 镜像里只装工具链、不编译 Go 代码——它`COPY` 的是**预编译好的** `dist/<arch>/artex`。
+> 所以请用 `./docker-build.sh`（自动串起全链路），不要直接 `docker compose up -d --build`
+> （会在 `COPY dist/<arch>/artex` 处失败）。
+>
+> 要用自己的镜像：在 `.env` 里设 `ARTEX_IMAGE=<registry>/artex:<tag>` 即可跳过本地构建。
 
 镜像已含常用工具（ripgrep/curl/vim/npm/nmap…）；`./skills` 与 `./data` 以绑定挂载持久化。
 
@@ -102,7 +124,8 @@ docker compose up -d          # 拉取 autumn27/artex 镜像 + postgres
 
 ### 方式三：下载预编译二进制（Releases）
 
-到 [Releases](https://github.com/Autumn-27/ARTEX/releases) 下载对应平台的 zip，解压后得到 `artex` + `start.sh`（Windows 为 `start.bat`）+ `skills/` + `config.example.json`：
+上游`Autumn-27/ARTEX` 没有任何 Release（仓库已删）。若你自己的 fork发布了 Release，
+到 [Releases](https://github.com/xinster/ARTEX/releases) 下载对应平台的 zip，解压后得到 `artex` + `start.sh`（Windows 为 `start.bat`）+ `skills/` + `config.example.json`：
 
 ```bash
 cp config.example.json config.json   # 填好 database 连接
@@ -117,10 +140,13 @@ cp config.example.json config.json   # 填好 database 连接
 ```bash
 # 1) 前端静态导出
 cd web && npm ci && npm run build:static && cd ..
-# 2) 拷进内嵌目录
+# 2) 拷进内嵌目录（必须是真实目录，go:embed不接受符号链接）
 cp -r web/out server/webui/dist
 # 3) 编译（-tags embedui 才内嵌前端）
-CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
+#    ARTEX_UPDATE_REPO 决定页面「一键更新」去哪个仓库拉新版；不设则禁用该功能。
+CGO_ENABLED=0 go build -tags embedui \
+  -ldflags "-X main.version=0.3.15 -X github.com/Autumn-27/artex/selfupdate.Repo=xinster/ARTEX" \
+  -o artex ./cmd/artex
 ./start.sh
 ```
 
@@ -129,9 +155,13 @@ CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
 `build.sh` 会先构建并嵌入前端，再使用 Go linker 去除调试信息，并将发布文件压缩为 zip。Release 模式默认生成 Linux amd64/arm64、macOS amd64/arm64 和 Windows amd64 的 zip 包：
 
 ```bash
-./build.sh --release
-# 产物：dist/artex-0.3.3-*.zip
+# 注入发布源，让编译产物能用自己的仓库做「一键更新」
+ARTEX_UPDATE_REPO=<owner>/<name> ./build.sh --release
+# 产物：dist/artex-<版本>-darwin-arm64.zip 等
 ```
+
+> 不设 `ARTEX_UPDATE_REPO` 时，`build.sh` 会把发布源置空，编译出的二进制**禁用一键更新**——
+> 页面会显示「未配置发布源」，而不是拿一个必然失败的请求当故障报给你。
 
 UPX 自解压二进制可能与部分 Linux 内核、虚拟化环境或安全策略不兼容，因此默认不启用。可用 `ARTEX_TARGETS` 自定义目标；确认目标运行环境兼容时，可显式传入 `--upx` 进一步缩小二进制：
 
@@ -149,6 +179,14 @@ ARTEX_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
 ### 方式一：页面一键更新（推荐）
 
 在 **系统配置** 页（侧边栏「系统配置」→ `/system/settings`）的**版本与更新**卡片里，可以直接检查并安装新版本，无需登录服务器。
+
+> **本 fork 需要先注入发布源**：编译时若未传 `ARTEX_UPDATE_REPO`，`selfupdate.Repo` 为空，
+> 该功能结构性禁用，页面显示「未配置发布源」。注入方式：
+> `ARTEX_UPDATE_REPO=<owner>/<name> ./build.sh --release`，或自己 `go build` 时加
+> `-ldflags "-X github.com/Autumn-27/artex/selfupdate.Repo=<owner>/<name>"`。
+>
+> 注意发布源必须**确实存在且已发布 Release**（GitHub 的 `releases/latest` 在无正式版时返回 404）。
+> 仓库存在但没发过 Release 时，页面会明确提示「尚未发布任何正式版本」。
 
 点「更新」后：下载当前平台的发布包 → 比对 Release 的 `SHA256SUMS` → 用 `-h` 冒烟测试新二进制 → 暂存为 `artex.new` → 程序退出，由 `start.sh` / `start.bat` 重新拉起并完成换装。页面会自动等到新版本上线后刷新。
 
@@ -171,20 +209,21 @@ cd ARTEX
 - **① Docker**：可指定目标镜像 tag（回车沿用 `.env` 的 `ARTEX_TAG`，缺省 `latest`）→ `docker compose pull` → `docker compose up -d`（换新镜像重启即自动迁移）。
 - **② 本地**：重建前端静态产物 → 重新编译 `./artex`（完成后重启进程生效）。
 
-### 方式三：Docker Compose（手动）
+### 方式三：Docker Compose（本地重建镜像）
+
+本 fork 的 compose 默认本地构建、不拉远端镜像，所以「更新镜像」= 重新构建：
 
 ```bash
 cd ARTEX
-git pull                       # 更新 compose / 脚本（可选）
-# 指定版本：在 .env 设 ARTEX_TAG=v0.2.0；不设则用 latest
-docker compose pull artex
-docker compose up -d artex     # 换新镜像重启 → 自动迁移 schema
-docker image prune -f          # 清理旧镜像（可选）
+git pull                              # 拉最新代码
+ARTEX_UPDATE_REPO=<owner>/<name> ./docker-build.sh --rebuild
 ```
+
+> 旧的 `docker compose pull artex` 路径只在你把 `ARTEX_IMAGE` 指向自己的 registry 时才可用。
 
 ### 方式四：预编译二进制（Releases）
 
-到 [Releases](https://github.com/Autumn-27/ARTEX/releases) 下载新版本 zip，停掉旧进程后覆盖 `artex` 与 `skills/`（保留你的 `config.json` 与 `data/`），重启即可：
+若你的 fork 已发布 Release，到 [Releases](https://github.com/xinster/ARTEX/releases) 下载新版本 zip，停掉旧进程后覆盖 `artex` 与 `skills/`（保留你的 `config.json` 与 `data/`），重启即可：
 
 ```bash
 cp -r <解压目录>/skills ./ && cp <解压目录>/artex ./

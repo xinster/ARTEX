@@ -6,11 +6,15 @@
 # 不再模拟 Next/Go 编译，速度快得多。
 #
 # 本地手动构建镜像时，先自行准备二进制：
+#   ./docker-build.sh                      # 推荐：自动完成①前端②编译③build④up
+#   # 或手动三步：
 #   cd web && npm run build:static && cd ..
 #   cp -r web/out server/webui/dist
-#   CGO_ENABLED=0 GOARCH=amd64 go build -tags embedui -o dist/amd64/artex ./cmd/artex
+#   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embedui -o dist/amd64/artex ./cmd/artex
 #   docker build -t artex:local .
 FROM python:3.12-slim-bookworm
+# 只装工具链、不在镜像内编译，所以 dist/<TARGETARCH>/artex 必须已由 build.sh /
+# docker-build.sh 预置好（见上方注释）。buildx 会自动注入宿主机架构。
 ARG TARGETARCH
 # 常用工具：ripgrep / curl / vim，加一批 recon 常备件（按需增删）。
 # Node 从 NodeSource 装 20.x：bookworm 自带的 apt nodejs 是 18，Playwright 要求 >=20。

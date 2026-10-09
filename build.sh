@@ -18,6 +18,11 @@
 #   ARTEX_SKIP_FRONTEND=1             Reuse server/webui/dist (for CI artifact builds).
 #   ARTEX_SKIP_NPM_CI=1               Skip npm ci while rebuilding the frontend.
 #   ARTEX_GOSUMDB=sum.golang.org      Go checksum database.
+#   ARTEX_UPDATE_REPO=owner/name     发布源（GitHub owner/name），供页面「一键更新」拉新版。
+#                                     上游 Autumn-27/artex 的仓库与 Release 已全部 404，
+#                                     fork 必须指向自己的发布源；留空则编译出的二进制
+#                                     禁用一键更新（前端显示「未配置」）。例：
+#                                       ARTEX_UPDATE_REPO=xinster/ARTEX ./build.sh --release
 set -euo pipefail
 
 cd "$(cd "$(dirname "$0")" && pwd)"
@@ -50,6 +55,12 @@ RELEASE_TARGETS_DEFAULT="linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windo
 ARTEX_RELEASE="${ARTEX_RELEASE:-0}"
 ARTEX_COMPRESS="${ARTEX_COMPRESS:-off}"
 ARTEX_PACKAGE="${ARTEX_PACKAGE:-0}"
+
+# 一键更新的发布源（owner/name），编译期注入 selfupdate.Repo。
+# 上游 Autumn-27/artex 的仓库与 Release 已全部 404，各 fork 必须指向自己的发布源，
+# 否则「一键更新」永远失败。留空则编译出的二进制禁用一键更新（前端显示「未配置」）。
+# 例：ARTEX_UPDATE_REPO=xinster/ARTEX ./build.sh --release
+ARTEX_UPDATE_REPO="${ARTEX_UPDATE_REPO:-}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -102,6 +113,18 @@ ARTEX_BUILD_VERSION="${ARTEX_BUILD_VERSION#v}"
 ARTEX_OUTPUT_DIR="${ARTEX_OUTPUT_DIR:-dist}"
 ARTEX_PACKAGE_DIR="${ARTEX_PACKAGE_DIR:-$ARTEX_OUTPUT_DIR}"
 ARTEX_UPX_ARGS="${ARTEX_UPX_ARGS:---best --lzma}"
+
+# 一次性更新源的 ldflags。发布源指向谁，决定了页面「一键更新」去哪里拉新版本。
+ARTEX_LDFLAGS="-s -w -buildid= -X main.version=${ARTEX_BUILD_VERSION}"
+if [ -n "$ARTEX_UPDATE_REPO" ]; then
+  ARTEX_LDFLAGS="$ARTEX_LDFLAGS -X github.com/Autumn-27/artex/selfupdate.Repo=${ARTEX_UPDATE_REPO}"
+  info "一键更新发布源：${ARTEX_UPDATE_REPO}"
+else
+  # selfupdate.Repo 的零值已是空串（一键更新禁用），这里显式写一次是为了让
+  # "未配置"这件事在编译命令里可见、可审计。
+  ARTEX_LDFLAGS="$ARTEX_LDFLAGS -X github.com/Autumn-27/artex/selfupdate.Repo="
+  warn "未设置 ARTEX_UPDATE_REPO → 编译出的二进制禁用一键更新（发布源为空）"
+fi
 
 if [ "${ARTEX_RELEASE}" = "1" ]; then
   ARTEX_TARGETS="${ARTEX_TARGETS:-$RELEASE_TARGETS_DEFAULT}"
@@ -219,7 +242,7 @@ build_target() {
   go build \
     -tags embedui \
     -trimpath \
-    -ldflags "-s -w -buildid= -X main.version=${ARTEX_BUILD_VERSION}" \
+    -ldflags "$ARTEX_LDFLAGS" \
     -o "$output" \
     ./cmd/artex
 

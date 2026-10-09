@@ -15,7 +15,25 @@ services:
     restart: unless-stopped
 
   artex:
-    image: autumn27/artex:${ARTEX_TAG:-latest}
+    # 上游镜像 autumn27/artex 所在的 Docker Hub 仓库已删除（拉取必然 404）。
+    # 这里改为**本地构建**：默认用 Dockerfile 从当前源码构建，不依赖任何外部镜像仓库。
+    #
+    #   docker compose up -d --build      # 构建并启动（首次必须带 --build）
+    #
+    # 想用自己推到 registry 的镜像？在 .env 里设 ARTEX_IMAGE 覆盖：
+    #   ARTEX_IMAGE=myreg.io/artex:0.3.15
+    # 同时用 ARTEX_TAG 选择 tag（仅在 ARTEX_IMAGE 未设时生效）。
+    image: ${ARTEX_IMAGE:-artex:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Dockerfile 靠 TARGETARCH 挑 dist/<arch>/artex。buildx 默认会注入宿主机
+        # 架构，所以这里**只在显式设置时**覆盖——传空串会把预置值清掉、导致
+        # COPY dist//artex 失败。交叉编译（如在 arm64 上给 amd64 出镜像）才需要它。
+        TARGETARCH: ${ARTEX_TARGETARCH:-}
+    # 本地构建的镜像不从 registry 拉；设了 ARTEX_IMAGE 指向自己的镜像时可改成 missing/always。
+    pull_policy: ${ARTEX_PULL_POLICY:-never}
     depends_on:
       postgres:
         condition: service_healthy

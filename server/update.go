@@ -220,9 +220,19 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 		"os":          runtime.GOOS,
 		"arch":        runtime.GOARCH,
 		"has_backup":  selfupdate.HasBackup(),
-		"repo":        selfupdate.Repo,
+		"repo":        selfupdate.RepoOrDefault(),
 		"boot_notice": boot.Detail,
 		"rolled_back": boot.RolledBack,
+		// 编译时没注入发布源 → 一键更新结构性不可用。前端据此把该功能标成
+		// 「未配置」而不是「检查失败」，避免用户反复点一个注定失败的按钮。
+		"repo_configured": selfupdate.RepoConfigured(),
+	}
+
+	if !selfupdate.RepoConfigured() {
+		out["reason"] = "本构建未配置发布源（编译时未注入 selfupdate.Repo），一键更新不可用"
+		out["unavailable"] = true
+		writeJSON(w, 200, out)
+		return
 	}
 
 	// 顶栏提示走缓存（默认）；用户点"检查更新"时带 force=1 强制回源。
@@ -268,6 +278,10 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 // 立刻返回 202，实际工作在后台 goroutine 上跑：整包下载可能要几分钟，
 // 挂在请求上会被反代超时掐断。进度走 /api/update/stream。
 func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
+	if !selfupdate.RepoConfigured() {
+		writeErr(w, 400, "本构建未配置发布源（编译时未注入 selfupdate.Repo），一键更新不可用")
+		return
+	}
 	current := BuildVersion
 
 	// 走缓存：确保装上的就是用户在界面上看到并确认的那个版本。

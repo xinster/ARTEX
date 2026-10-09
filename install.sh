@@ -45,9 +45,16 @@ install_docker(){
   else
     info "沿用已存在的 .env"
   fi
-  info "拉取镜像并启动…"
-  docker compose pull || true
-  docker compose up -d
+  info "构建镜像并启动…"
+  # 上游 Docker Hub 镜像 autumn27/artex 已删除，compose 默认本地构建（不 pull）。
+  # 走 docker-build.sh 以完成"前端导出 → 编译 dist/<arch>/artex → build"整条链路；
+  # Dockerfile 只 COPY 预编译二进制，直接 compose build 会在 COPY 处失败。
+  if [ -x ./docker-build.sh ]; then
+    ./docker-build.sh || die "docker-build.sh 执行失败"
+  else
+    docker compose build artex || die "镜像构建失败"
+    docker compose up -d
+  fi
   ok "启动完成 → http://localhost:8787"
   info "查看日志：docker compose logs -f artex"
 }
